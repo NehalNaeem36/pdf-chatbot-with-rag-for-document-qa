@@ -1,4 +1,4 @@
-# PDF QA
+# PDF Chatbot with RAG for Document QA
 
 Local question answering over a single text-based PDF. The app reads one PDF at a time, chunks it, embeds it, retrieves relevant evidence, reranks that evidence, answers only from the document, and returns a citation to the source page/chunk.
 
@@ -34,7 +34,7 @@ PDF -> page extraction -> cleaning -> chunking -> embeddings -> FAISS retrieval
 ## Proposed Project Structure
 
 ```text
-pdf-qa/
+pdf-chatbot-with-rag-for-document-qa/
 ├── README.md
 ├── PROJECT_PLAN.md
 ├── requirements.txt

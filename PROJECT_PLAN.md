@@ -1,4 +1,4 @@
-# PDF QA Project Plan
+# PDF Chatbot with RAG for Document QA Project Plan
 
 ## Project Goal
 
@@ -33,7 +33,7 @@ Version 1 will not:
 ### Folder Structure
 
 ```text
-pdf-qa/
+pdf-chatbot-with-rag-for-document-qa/
 ├── README.md
 ├── PROJECT_PLAN.md
 ├── requirements.txt
