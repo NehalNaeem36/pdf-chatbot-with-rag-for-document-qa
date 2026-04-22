@@ -13,6 +13,8 @@ from chunker import ChunkData
 class RetrievalResult:
     chunk: ChunkData
     score: float
+    retrieval_score: float | None = None
+    reranker_score: float | None = None
 
 
 @dataclass(slots=True)
@@ -201,6 +203,13 @@ class Retriever:
         for score, index in zip(scores[0], indices[0], strict=False):
             if index < 0:
                 continue
-            results.append(RetrievalResult(chunk=self.chunks[index], score=float(score)))
+            numeric_score = float(score)
+            results.append(
+                RetrievalResult(
+                    chunk=self.chunks[index],
+                    score=numeric_score,
+                    retrieval_score=numeric_score,
+                )
+            )
 
         return results

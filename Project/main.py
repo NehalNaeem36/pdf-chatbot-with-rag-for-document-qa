@@ -12,8 +12,10 @@ from pdf_reader import (
     resolve_pdf_input,
     save_page_artifacts,
 )
+from qa_engine import QAEngine
 from reranker import Reranker
 from retriever import Retriever
+from scope_checker import ABSTENTION_MESSAGE, decide_support
 
 
 PROJECT_DIR = Path(__file__).resolve().parent
@@ -29,7 +31,7 @@ DEFAULT_FINAL_RESULTS = 3
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Local PDF ingestion and chunking entrypoint."
+        description="Local PDF question answering entrypoint."
     )
     parser.add_argument(
         "--pdf",
@@ -87,29 +89,12 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def preview_text(text: str, limit: int = 100) -> str:
-    single_line = text.replace("\n", " ")
-    return single_line[:limit]
-
-
-def print_retrieval_results(results: list, *, limit: int = 220) -> None:
-    if not results:
-        print("No chunks retrieved.")
-        return
-
-    for rank, result in enumerate(results, start=1):
-        print(
-            f"{rank}. score={result.score:.4f} | page={result.chunk.page_number} | "
-            f"chunk={result.chunk.chunk_id}"
-        )
-        print(preview_text(result.chunk.text, limit=limit))
-
-
 def interactive_retrieval_loop(
     *,
     retriever: Retriever,
     embedder: Embedder,
     reranker: Reranker,
+    qa_engine: QAEngine,
     top_k: int,
 ) -> None:
     while True:
@@ -132,9 +117,25 @@ def interactive_retrieval_loop(
             final_results = reranked_results[:DEFAULT_FINAL_RESULTS]
         except Exception:
             print("Reranker unavailable, showing raw retrieval results.")
+            reranked_results = results[:DEFAULT_FINAL_RESULTS]
             final_results = results[:DEFAULT_FINAL_RESULTS]
 
-        print_retrieval_results(final_results)
+        try:
+            answer = qa_engine.answer(question, final_results)
+        except Exception:
+            answer = None
+
+        decision = decide_support(
+            retrieval_results=results,
+            reranked_results=reranked_results,
+            answer=answer,
+        )
+        if not decision.supported or answer is None:
+            print(ABSTENTION_MESSAGE)
+            continue
+
+        print(f"Answer: {answer.answer}")
+        print(f"Source: page {answer.page_number}, chunk {answer.chunk_id}")
 
 
 def main() -> int:
@@ -213,24 +214,14 @@ def main() -> int:
     print(f"Saved FAISS index to: {saved_index_path}")
     print(f"Saved index metadata to: {saved_index_meta_path}")
 
-    for page in normalized_pages[:3]:
-        print(
-            f"Page {page.page_number} ({page.char_count} chars, {page.paragraph_count} paragraphs): "
-            f"{preview_text(page.text, limit=120)}"
-        )
-
-    for chunk in chunks[:3]:
-        print(
-            f"Chunk {chunk.chunk_id} [page {chunk.page_number}, chars {chunk.start_char}:{chunk.end_char}]: "
-            f"{preview_text(chunk.text, limit=120)}"
-        )
-
     reranker = Reranker()
+    qa_engine = QAEngine()
 
     interactive_retrieval_loop(
         retriever=retriever,
         embedder=embedder,
         reranker=reranker,
+        qa_engine=qa_engine,
         top_k=args.top_k,
     )
 

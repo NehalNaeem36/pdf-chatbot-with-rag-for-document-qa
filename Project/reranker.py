@@ -57,7 +57,14 @@ class Reranker:
         scores = self._get_model().predict(pairs)
 
         reranked = [
-            RetrievalResult(chunk=result.chunk, score=float(score))
+            RetrievalResult(
+                chunk=result.chunk,
+                score=float(score),
+                retrieval_score=(
+                    result.retrieval_score if result.retrieval_score is not None else result.score
+                ),
+                reranker_score=float(score),
+            )
             for result, score in zip(results, scores, strict=False)
         ]
         reranked.sort(key=lambda item: item.score, reverse=True)

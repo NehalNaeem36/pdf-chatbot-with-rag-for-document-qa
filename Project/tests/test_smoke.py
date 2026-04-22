@@ -18,6 +18,7 @@ def fake_embedding_env() -> dict[str, str]:
     environment = os.environ.copy()
     environment["PDF_QA_FAKE_EMBEDDINGS"] = "1"
     environment["PDF_QA_FAKE_RERANKER"] = "1"
+    environment["PDF_QA_FAKE_QA"] = "1"
     return environment
 
 
@@ -99,6 +100,115 @@ def test_reranker_orders_results_by_fake_relevance(monkeypatch) -> None:
 
     assert [item.chunk.chunk_id for item in reranked] == ["p1-c0", "p1-c2", "p1-c1"]
     assert reranked[0].score >= reranked[1].score >= reranked[2].score
+
+
+def test_qa_engine_selects_best_valid_answer_from_evidence(monkeypatch) -> None:
+    sys.path.insert(0, str(PROJECT_DIR))
+    monkeypatch.setenv("PDF_QA_FAKE_QA", "1")
+
+    from chunker import ChunkData
+    from qa_engine import QAEngine
+    from retriever import RetrievalResult
+
+    results = [
+        RetrievalResult(
+            chunk=ChunkData(
+                "p1-c0",
+                1,
+                "sample.pdf",
+                "Cloud computing allows on-demand infrastructure provisioning.",
+                59,
+                0,
+                59,
+            ),
+            score=0.82,
+            retrieval_score=0.82,
+            reranker_score=2.1,
+        ),
+        RetrievalResult(
+            chunk=ChunkData(
+                "p2-c0",
+                2,
+                "sample.pdf",
+                "Resource scheduling is another concern in distributed systems.",
+                62,
+                0,
+                62,
+            ),
+            score=0.61,
+            retrieval_score=0.61,
+            reranker_score=1.3,
+        ),
+    ]
+
+    answer = QAEngine().answer("What allows on-demand infrastructure provisioning?", results)
+
+    assert answer is not None
+    assert answer.answer == "Cloud computing allows on-demand infrastructure provisioning."
+    assert answer.page_number == 1
+    assert answer.chunk_id == "p1-c0"
+    assert answer.retrieval_score == 0.82
+    assert answer.reranker_score == 2.1
+
+
+def test_scope_checker_enforces_conservative_thresholds() -> None:
+    sys.path.insert(0, str(PROJECT_DIR))
+
+    from chunker import ChunkData
+    from qa_engine import AnswerResult
+    from retriever import RetrievalResult
+    from scope_checker import decide_support
+
+    chunk = ChunkData("p1-c0", 1, "sample.pdf", "Cloud computing allows fast scaling.", 37, 0, 37)
+    retrieval_results = [
+        RetrievalResult(chunk=chunk, score=0.31, retrieval_score=0.31),
+    ]
+    reranked_results = [
+        RetrievalResult(chunk=chunk, score=1.4, retrieval_score=0.31, reranker_score=1.4),
+    ]
+    answer = AnswerResult(
+        answer="Cloud computing allows fast scaling.",
+        score=0.74,
+        page_number=1,
+        chunk_id="p1-c0",
+        source_file="sample.pdf",
+        context=chunk.text,
+        retrieval_score=0.31,
+        reranker_score=1.4,
+    )
+
+    supported = decide_support(retrieval_results, reranked_results, answer)
+    weak_retrieval = decide_support(
+        [RetrievalResult(chunk=chunk, score=0.19, retrieval_score=0.19)],
+        reranked_results,
+        answer,
+    )
+    weak_reranker = decide_support(
+        retrieval_results,
+        [RetrievalResult(chunk=chunk, score=-0.1, retrieval_score=0.31, reranker_score=-0.1)],
+        answer,
+    )
+    missing_answer = decide_support(retrieval_results, reranked_results, None)
+    low_qa = decide_support(
+        retrieval_results,
+        reranked_results,
+        AnswerResult(
+            answer="Cloud computing allows fast scaling.",
+            score=0.1,
+            page_number=1,
+            chunk_id="p1-c0",
+            source_file="sample.pdf",
+            context=chunk.text,
+            retrieval_score=0.31,
+            reranker_score=1.4,
+        ),
+    )
+
+    assert supported.supported is True
+    assert weak_retrieval.supported is False
+    assert weak_reranker.supported is False
+    assert missing_answer.supported is False
+    assert low_qa.supported is False
 
 
 def test_retriever_save_load_roundtrip_preserves_results() -> None:
@@ -447,7 +557,7 @@ def test_main_fails_when_multiple_pdfs_exist_without_explicit_pdf() -> None:
     assert "beta.pdf" in result.stderr
 
 
-def test_main_interactive_retrieval_returns_ranked_chunks() -> None:
+def test_main_interactive_retrieval_returns_answer_and_source() -> None:
     with tempfile.TemporaryDirectory() as temp_dir:
         temp_path = Path(temp_dir)
         source_dir = temp_path / "source"
@@ -492,8 +602,54 @@ def test_main_interactive_retrieval_returns_ranked_chunks() -> None:
 
     assert result.returncode == 0
     assert "Ask a question" in result.stdout
-    assert "1. score=" in result.stdout
-    assert "chunk=p" in result.stdout
+    assert "Answer:" in result.stdout
+    assert "Source: page 1, chunk p1-c0" in result.stdout
+    assert "1. score=" not in result.stdout
+
+
+def test_main_returns_out_of_scope_for_unsupported_question() -> None:
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp_path = Path(temp_dir)
+        source_dir = temp_path / "source"
+        extracted_dir = temp_path / "extracted"
+        normalized_dir = temp_path / "normalized"
+        embeddings_dir = temp_path / "embeddings"
+        indexes_dir = temp_path / "indexes"
+
+        source_dir.mkdir()
+        create_sample_pdf(
+            source_dir / "only.pdf",
+            [
+                "Cloud computing allows on-demand infrastructure provisioning.",
+                "Containers help package applications for deployment.",
+            ],
+        )
+
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(PROJECT_DIR / "main.py"),
+                "--source-dir",
+                str(source_dir),
+                "--extracted-dir",
+                str(extracted_dir),
+                "--normalized-dir",
+                str(normalized_dir),
+                "--embeddings-dir",
+                str(embeddings_dir),
+                "--indexes-dir",
+                str(indexes_dir),
+            ],
+            cwd=PROJECT_DIR,
+            capture_output=True,
+            text=True,
+            env=fake_embedding_env(),
+            input="Who is the president of France?\nexit\n",
+            check=False,
+        )
+
+    assert result.returncode == 0
+    assert "This is outside the scope of the PDF." in result.stdout
 
 
 def test_main_falls_back_to_raw_retrieval_when_reranker_fails() -> None:
@@ -545,3 +701,52 @@ def test_main_falls_back_to_raw_retrieval_when_reranker_fails() -> None:
 
     assert result.returncode == 0
     assert "Reranker unavailable, showing raw retrieval results." in result.stdout
+    assert "Answer:" in result.stdout
+    assert "Source:" in result.stdout
+
+
+def test_main_returns_out_of_scope_when_qa_fails() -> None:
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp_path = Path(temp_dir)
+        source_dir = temp_path / "source"
+        extracted_dir = temp_path / "extracted"
+        normalized_dir = temp_path / "normalized"
+        embeddings_dir = temp_path / "embeddings"
+        indexes_dir = temp_path / "indexes"
+
+        source_dir.mkdir()
+        create_sample_pdf(
+            source_dir / "only.pdf",
+            [
+                "Cloud deployment monitoring and observability are important.",
+            ],
+        )
+
+        environment = fake_embedding_env()
+        environment["PDF_QA_FORCE_QA_FAILURE"] = "1"
+
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(PROJECT_DIR / "main.py"),
+                "--source-dir",
+                str(source_dir),
+                "--extracted-dir",
+                str(extracted_dir),
+                "--normalized-dir",
+                str(normalized_dir),
+                "--embeddings-dir",
+                str(embeddings_dir),
+                "--indexes-dir",
+                str(indexes_dir),
+            ],
+            cwd=PROJECT_DIR,
+            capture_output=True,
+            text=True,
+            env=environment,
+            input="What is important?\nexit\n",
+            check=False,
+        )
+
+    assert result.returncode == 0
+    assert "This is outside the scope of the PDF." in result.stdout
