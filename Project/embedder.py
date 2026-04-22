@@ -84,6 +84,16 @@ def save_embedding_artifacts(
     return embeddings_path, metadata_path
 
 
+def load_embedding_artifacts(
+    embeddings_path: str | Path,
+    metadata_path: str | Path,
+) -> tuple[np.ndarray, EmbeddingArtifactMetadata]:
+    matrix = np.load(Path(embeddings_path)).astype(np.float32)
+    metadata_dict = json.loads(Path(metadata_path).read_text(encoding="utf-8"))
+    metadata = EmbeddingArtifactMetadata(**metadata_dict)
+    return matrix, metadata
+
+
 @dataclass
 class Embedder:
     model_name: str = DEFAULT_EMBEDDING_MODEL

@@ -52,7 +52,8 @@ pdf-chatbot-with-rag-for-document-qa/
 │   │   ├── source/
 │   │   ├── extracted/
 │   │   ├── normalized/
-│   │   └── embeddings/
+│   │   ├── embeddings/
+│   │   └── indexes/
 │   ├── tests/
 │   │   └── test_smoke.py
 │   ├── main.py
@@ -85,7 +86,7 @@ pdf-chatbot-with-rag-for-document-qa/
 - `pdf_reader.py`: extract raw page text, normalize it page by page, skip empty pages after cleaning
 - `chunker.py`: build page-bounded chunks with overlap and metadata
 - `embedder.py`: load the embedding model, encode chunks/questions, and save embedding artifacts
-- `retriever.py`: build and query the FAISS index
+- `retriever.py`: build, persist, load, and query the FAISS index
 - `reranker.py`: reorder retrieved chunks by query relevance
 - `qa_engine.py`: produce an answer from top evidence
 - `scope_checker.py`: decide answer vs abstain

@@ -51,7 +51,8 @@ pdf-chatbot-with-rag-for-document-qa/
 │   │   ├── source/
 │   │   ├── extracted/
 │   │   ├── normalized/
-│   │   └── embeddings/
+│   │   ├── embeddings/
+│   │   └── indexes/
 │   ├── tests/
 │   │   └── test_smoke.py
 │   ├── main.py

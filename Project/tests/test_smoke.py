@@ -17,6 +17,7 @@ PROJECT_DIR = Path(__file__).resolve().parents[1]
 def fake_embedding_env() -> dict[str, str]:
     environment = os.environ.copy()
     environment["PDF_QA_FAKE_EMBEDDINGS"] = "1"
+    environment["PDF_QA_FAKE_RERANKER"] = "1"
     return environment
 
 
@@ -41,6 +42,104 @@ def test_modules_import() -> None:
     import reranker  # noqa: F401
     import retriever  # noqa: F401
     import scope_checker  # noqa: F401
+
+
+def test_retriever_builds_and_searches_cosine_similarity() -> None:
+    sys.path.insert(0, str(PROJECT_DIR))
+
+    from chunker import ChunkData
+    from retriever import Retriever
+
+    chunks = [
+        ChunkData("p1-c0", 1, "sample.pdf", "alpha", 5, 0, 5),
+        ChunkData("p1-c1", 1, "sample.pdf", "beta", 4, 6, 10),
+        ChunkData("p2-c0", 2, "sample.pdf", "gamma", 5, 0, 5),
+    ]
+    embeddings = np.asarray(
+        [
+            [1.0, 0.0],
+            [0.0, 1.0],
+            [1.0, 1.0],
+        ],
+        dtype=np.float32,
+    )
+
+    retriever = Retriever()
+    retriever.build(embeddings, chunks)
+    results = retriever.search(np.asarray([1.0, 0.0], dtype=np.float32), top_k=3)
+
+    assert [result.chunk.chunk_id for result in results] == ["p1-c0", "p2-c0", "p1-c1"]
+    assert results[0].score >= results[1].score >= results[2].score
+
+
+def test_reranker_orders_results_by_fake_relevance(monkeypatch) -> None:
+    sys.path.insert(0, str(PROJECT_DIR))
+    monkeypatch.setenv("PDF_QA_FAKE_RERANKER", "1")
+
+    from chunker import ChunkData
+    from reranker import Reranker
+    from retriever import RetrievalResult
+
+    results = [
+        RetrievalResult(
+            chunk=ChunkData("p1-c0", 1, "sample.pdf", "cloud deployment monitoring", 27, 0, 27),
+            score=0.1,
+        ),
+        RetrievalResult(
+            chunk=ChunkData("p1-c1", 1, "sample.pdf", "banana orange grape", 19, 28, 47),
+            score=0.9,
+        ),
+        RetrievalResult(
+            chunk=ChunkData("p1-c2", 1, "sample.pdf", "cloud deployment pipeline", 25, 48, 73),
+            score=0.4,
+        ),
+    ]
+
+    reranked = Reranker().rerank("cloud deployment", results)
+
+    assert [item.chunk.chunk_id for item in reranked] == ["p1-c0", "p1-c2", "p1-c1"]
+    assert reranked[0].score >= reranked[1].score >= reranked[2].score
+
+
+def test_retriever_save_load_roundtrip_preserves_results() -> None:
+    sys.path.insert(0, str(PROJECT_DIR))
+
+    from chunker import ChunkData
+    from retriever import Retriever
+
+    chunks = [
+        ChunkData("p1-c0", 1, "sample.pdf", "alpha", 5, 0, 5),
+        ChunkData("p1-c1", 1, "sample.pdf", "beta", 4, 6, 10),
+    ]
+    embeddings = np.asarray([[1.0, 0.0], [0.0, 1.0]], dtype=np.float32)
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp_path = Path(temp_dir)
+        index_path = temp_path / "sample_faiss.index"
+        metadata_path = temp_path / "sample_index_meta.json"
+
+        retriever = Retriever()
+        retriever.build(embeddings, chunks)
+        retriever.save(
+            index_path=index_path,
+            metadata_path=metadata_path,
+            source_file="sample.pdf",
+            chunk_artifact="sample_chunks.json",
+            embedding_artifact="sample_embeddings.npy",
+            embedding_model="fake-model",
+        )
+
+        loaded_retriever = Retriever()
+        metadata = loaded_retriever.load(
+            index_path=index_path,
+            metadata_path=metadata_path,
+            chunks=chunks,
+        )
+        results = loaded_retriever.search(np.asarray([1.0, 0.0], dtype=np.float32), top_k=2)
+
+    assert metadata.embedding_dimension == 2
+    assert metadata.num_chunks == 2
+    assert [result.chunk.chunk_id for result in results] == ["p1-c0", "p1-c1"]
 
 
 def test_embedder_encodes_texts_as_float32_matrix(monkeypatch) -> None:
@@ -102,6 +201,7 @@ def test_main_fails_without_pdf_when_source_is_empty() -> None:
             capture_output=True,
             text=True,
             env=fake_embedding_env(),
+            input="exit\n",
             check=False,
         )
 
@@ -186,6 +286,7 @@ def test_main_writes_artifacts_for_pdf() -> None:
         extracted_dir = temp_path / "extracted"
         normalized_dir = temp_path / "normalized"
         embeddings_dir = temp_path / "embeddings"
+        indexes_dir = temp_path / "indexes"
 
         source_dir.mkdir()
         pdf_path = source_dir / "fixture_sample.pdf"
@@ -212,6 +313,8 @@ def test_main_writes_artifacts_for_pdf() -> None:
                 str(normalized_dir),
                 "--embeddings-dir",
                 str(embeddings_dir),
+                "--indexes-dir",
+                str(indexes_dir),
                 "--chunk-size",
                 "120",
                 "--overlap",
@@ -221,6 +324,7 @@ def test_main_writes_artifacts_for_pdf() -> None:
             capture_output=True,
             text=True,
             env=fake_embedding_env(),
+            input="exit\n",
             check=False,
         )
 
@@ -234,18 +338,23 @@ def test_main_writes_artifacts_for_pdf() -> None:
         chunks_path = normalized_dir / "fixture_sample_chunks.json"
         embeddings_path = embeddings_dir / "fixture_sample_embeddings.npy"
         embeddings_meta_path = embeddings_dir / "fixture_sample_embeddings_meta.json"
+        index_path = indexes_dir / "fixture_sample_faiss.index"
+        index_meta_path = indexes_dir / "fixture_sample_index_meta.json"
 
         assert raw_pages_path.exists()
         assert normalized_pages_path.exists()
         assert chunks_path.exists()
         assert embeddings_path.exists()
         assert embeddings_meta_path.exists()
+        assert index_path.exists()
+        assert index_meta_path.exists()
 
         raw_pages = json.loads(raw_pages_path.read_text(encoding="utf-8"))
         normalized_pages = json.loads(normalized_pages_path.read_text(encoding="utf-8"))
         chunks = json.loads(chunks_path.read_text(encoding="utf-8"))
         embeddings_meta = json.loads(embeddings_meta_path.read_text(encoding="utf-8"))
         embeddings = np.load(embeddings_path)
+        index_meta = json.loads(index_meta_path.read_text(encoding="utf-8"))
 
         assert len(raw_pages) == 3
         assert [page["page_number"] for page in normalized_pages] == [1, 3]
@@ -256,6 +365,10 @@ def test_main_writes_artifacts_for_pdf() -> None:
         assert embeddings_meta["chunk_artifact"] == str(chunks_path)
         assert embeddings_meta["num_chunks"] == len(chunks)
         assert embeddings_meta["embedding_dimension"] == int(embeddings.shape[1])
+        assert index_meta["chunk_artifact"] == str(chunks_path)
+        assert index_meta["embedding_artifact"] == str(embeddings_path)
+        assert index_meta["embedding_dimension"] == int(embeddings.shape[1])
+        assert index_meta["num_chunks"] == len(chunks)
 
 
 def test_main_auto_detects_the_only_pdf_in_source() -> None:
@@ -265,6 +378,7 @@ def test_main_auto_detects_the_only_pdf_in_source() -> None:
         extracted_dir = temp_path / "extracted"
         normalized_dir = temp_path / "normalized"
         embeddings_dir = temp_path / "embeddings"
+        indexes_dir = temp_path / "indexes"
 
         source_dir.mkdir()
         create_sample_pdf(
@@ -287,11 +401,14 @@ def test_main_auto_detects_the_only_pdf_in_source() -> None:
                 str(normalized_dir),
                 "--embeddings-dir",
                 str(embeddings_dir),
+                "--indexes-dir",
+                str(indexes_dir),
             ],
             cwd=PROJECT_DIR,
             capture_output=True,
             text=True,
             env=fake_embedding_env(),
+            input="exit\n",
             check=False,
         )
 
@@ -320,6 +437,7 @@ def test_main_fails_when_multiple_pdfs_exist_without_explicit_pdf() -> None:
             capture_output=True,
             text=True,
             env=fake_embedding_env(),
+            input="exit\n",
             check=False,
         )
 
@@ -327,3 +445,103 @@ def test_main_fails_when_multiple_pdfs_exist_without_explicit_pdf() -> None:
     assert "Multiple PDFs found in" in result.stderr
     assert "alpha.pdf" in result.stderr
     assert "beta.pdf" in result.stderr
+
+
+def test_main_interactive_retrieval_returns_ranked_chunks() -> None:
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp_path = Path(temp_dir)
+        source_dir = temp_path / "source"
+        extracted_dir = temp_path / "extracted"
+        normalized_dir = temp_path / "normalized"
+        embeddings_dir = temp_path / "embeddings"
+        indexes_dir = temp_path / "indexes"
+
+        source_dir.mkdir()
+        create_sample_pdf(
+            source_dir / "only.pdf",
+            [
+                "Cloud computing allows on-demand infrastructure provisioning.\n\nVirtual machines and containers are used.",
+                "Scheduling and resource allocation are key concerns in distributed systems.",
+            ],
+        )
+
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(PROJECT_DIR / "main.py"),
+                "--source-dir",
+                str(source_dir),
+                "--extracted-dir",
+                str(extracted_dir),
+                "--normalized-dir",
+                str(normalized_dir),
+                "--embeddings-dir",
+                str(embeddings_dir),
+                "--indexes-dir",
+                str(indexes_dir),
+                "--top-k",
+                "2",
+            ],
+            cwd=PROJECT_DIR,
+            capture_output=True,
+            text=True,
+            env=fake_embedding_env(),
+            input="What does cloud computing provide?\nexit\n",
+            check=False,
+        )
+
+    assert result.returncode == 0
+    assert "Ask a question" in result.stdout
+    assert "1. score=" in result.stdout
+    assert "chunk=p" in result.stdout
+
+
+def test_main_falls_back_to_raw_retrieval_when_reranker_fails() -> None:
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp_path = Path(temp_dir)
+        source_dir = temp_path / "source"
+        extracted_dir = temp_path / "extracted"
+        normalized_dir = temp_path / "normalized"
+        embeddings_dir = temp_path / "embeddings"
+        indexes_dir = temp_path / "indexes"
+
+        source_dir.mkdir()
+        create_sample_pdf(
+            source_dir / "only.pdf",
+            [
+                "Cloud deployment monitoring and observability are important.",
+                "Resource scheduling is another concern.",
+            ],
+        )
+
+        environment = fake_embedding_env()
+        environment["PDF_QA_FAKE_RERANKER"] = "0"
+        environment["PDF_QA_FORCE_RERANKER_FAILURE"] = "1"
+
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(PROJECT_DIR / "main.py"),
+                "--source-dir",
+                str(source_dir),
+                "--extracted-dir",
+                str(extracted_dir),
+                "--normalized-dir",
+                str(normalized_dir),
+                "--embeddings-dir",
+                str(embeddings_dir),
+                "--indexes-dir",
+                str(indexes_dir),
+                "--top-k",
+                "5",
+            ],
+            cwd=PROJECT_DIR,
+            capture_output=True,
+            text=True,
+            env=environment,
+            input="cloud deployment\nexit\n",
+            check=False,
+        )
+
+    assert result.returncode == 0
+    assert "Reranker unavailable, showing raw retrieval results." in result.stdout
