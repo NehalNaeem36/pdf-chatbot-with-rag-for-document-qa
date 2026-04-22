@@ -50,7 +50,8 @@ pdf-chatbot-with-rag-for-document-qa/
 │   ├── Data/
 │   │   ├── source/
 │   │   ├── extracted/
-│   │   └── normalized/
+│   │   ├── normalized/
+│   │   └── embeddings/
 │   ├── tests/
 │   │   └── test_smoke.py
 │   ├── main.py

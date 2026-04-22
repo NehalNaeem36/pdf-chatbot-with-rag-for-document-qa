@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, is_dataclass
+import json
 from pathlib import Path
 import re
 
@@ -22,6 +23,14 @@ class NormalizedPageData:
     text: str
     char_count: int
     paragraph_count: int
+
+
+def _save_json_artifact(data: list[object], output_path: str | Path) -> Path:
+    path = Path(output_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    serialized = [asdict(item) if is_dataclass(item) else item for item in data]
+    path.write_text(json.dumps(serialized, indent=2), encoding="utf-8")
+    return path
 
 
 def normalize_page_text(text: str) -> str:
@@ -83,3 +92,64 @@ def normalize_pages(pages: list[ExtractedPageData]) -> list[NormalizedPageData]:
         )
 
     return normalized_pages
+
+
+def resolve_pdf_input(pdf_arg: Path | None, source_dir: str | Path) -> Path:
+    source_path = Path(source_dir)
+
+    if pdf_arg is None:
+        return find_default_pdf(source_path)
+
+    if pdf_arg.exists():
+        return pdf_arg
+
+    if pdf_arg.parent == Path(".") or len(pdf_arg.parts) == 1:
+        candidate = source_path / pdf_arg.name
+        if candidate.exists():
+            return candidate
+
+    raise FileNotFoundError(f"PDF not found: {pdf_arg}")
+
+
+def find_default_pdf(source_dir: str | Path) -> Path:
+    source_path = Path(source_dir)
+    if not source_path.exists():
+        raise FileNotFoundError(
+            f"No PDF found in {source_path}. Add one or pass --pdf."
+        )
+
+    pdf_candidates = sorted(
+        path
+        for path in source_path.iterdir()
+        if path.is_file() and path.suffix.lower() == ".pdf"
+    )
+
+    if not pdf_candidates:
+        raise FileNotFoundError(
+            f"No PDF found in {source_path}. Add one or pass --pdf."
+        )
+
+    if len(pdf_candidates) > 1:
+        names = ", ".join(path.name for path in pdf_candidates)
+        raise RuntimeError(
+            f"Multiple PDFs found in {source_path}: {names}. Pass --pdf to choose one."
+        )
+
+    return pdf_candidates[0]
+
+
+def save_page_artifacts(
+    raw_pages: list[ExtractedPageData],
+    normalized_pages: list[NormalizedPageData],
+    *,
+    extracted_dir: str | Path,
+    normalized_dir: str | Path,
+    pdf_stem: str,
+) -> tuple[Path, Path]:
+    raw_pages_path = Path(extracted_dir) / f"{pdf_stem}_pages_raw.json"
+    normalized_pages_path = Path(normalized_dir) / f"{pdf_stem}_pages_normalized.json"
+
+    _save_json_artifact(raw_pages, raw_pages_path)
+    _save_json_artifact(normalized_pages, normalized_pages_path)
+
+    return raw_pages_path, normalized_pages_path

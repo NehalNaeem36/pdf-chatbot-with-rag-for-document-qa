@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, is_dataclass
+import json
+from pathlib import Path
 import re
 
 from pdf_reader import NormalizedPageData
@@ -199,3 +201,16 @@ def chunk_pages(
         )
 
     return chunks
+
+
+def save_chunks_artifact(
+    chunks: list[ChunkData],
+    *,
+    normalized_dir: str | Path,
+    pdf_stem: str,
+) -> Path:
+    chunks_path = Path(normalized_dir) / f"{pdf_stem}_chunks.json"
+    chunks_path.parent.mkdir(parents=True, exist_ok=True)
+    serialized = [asdict(item) if is_dataclass(item) else item for item in chunks]
+    chunks_path.write_text(json.dumps(serialized, indent=2), encoding="utf-8")
+    return chunks_path

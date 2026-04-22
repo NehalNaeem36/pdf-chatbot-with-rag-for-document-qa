@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import asdict, is_dataclass
-import json
 from pathlib import Path
 import sys
 
-from chunker import chunk_pages
-from pdf_reader import extract_raw_pdf_pages, normalize_pages
+from chunker import chunk_pages, save_chunks_artifact
+from embedder import Embedder, save_embedding_artifacts, validate_embeddings
+from pdf_reader import (
+    extract_raw_pdf_pages,
+    normalize_pages,
+    resolve_pdf_input,
+    save_page_artifacts,
+)
 
 
 PROJECT_DIR = Path(__file__).resolve().parent
@@ -15,6 +19,7 @@ DATA_DIR = PROJECT_DIR / "Data"
 DEFAULT_SOURCE_DIR = DATA_DIR / "source"
 DEFAULT_EXTRACTED_DIR = DATA_DIR / "extracted"
 DEFAULT_NORMALIZED_DIR = DATA_DIR / "normalized"
+DEFAULT_EMBEDDINGS_DIR = DATA_DIR / "embeddings"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -56,57 +61,13 @@ def build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_NORMALIZED_DIR,
         help="Directory for normalized page and chunk artifacts.",
     )
-    return parser
-
-
-def resolve_pdf_path(pdf_arg: Path, source_dir: Path) -> Path:
-    if pdf_arg.exists():
-        return pdf_arg
-    if pdf_arg.parent == Path(".") or len(pdf_arg.parts) == 1:
-        candidate = source_dir / pdf_arg.name
-        if candidate.exists():
-            return candidate
-    raise FileNotFoundError(f"PDF not found: {pdf_arg}")
-
-
-def find_default_pdf(source_dir: Path) -> Path:
-    if not source_dir.exists():
-        raise FileNotFoundError(
-            f"No PDF found in {source_dir}. Add one or pass --pdf."
-        )
-
-    pdf_candidates = sorted(
-        path
-        for path in source_dir.iterdir()
-        if path.is_file() and path.suffix.lower() == ".pdf"
+    parser.add_argument(
+        "--embeddings-dir",
+        type=Path,
+        default=DEFAULT_EMBEDDINGS_DIR,
+        help="Directory for embedding artifacts.",
     )
-
-    if not pdf_candidates:
-        raise FileNotFoundError(
-            f"No PDF found in {source_dir}. Add one or pass --pdf."
-        )
-
-    if len(pdf_candidates) > 1:
-        names = ", ".join(path.name for path in pdf_candidates)
-        raise RuntimeError(
-            f"Multiple PDFs found in {source_dir}: {names}. Pass --pdf to choose one."
-        )
-
-    return pdf_candidates[0]
-
-
-def ensure_directory(path: Path) -> Path:
-    path.mkdir(parents=True, exist_ok=True)
-    return path
-
-
-def save_json_artifact(data: list[object], output_path: str | Path) -> Path:
-    path = Path(output_path)
-    ensure_directory(path.parent)
-
-    serialized = [asdict(item) if is_dataclass(item) else item for item in data]
-    path.write_text(json.dumps(serialized, indent=2), encoding="utf-8")
-    return path
+    return parser
 
 
 def preview_text(text: str, limit: int = 100) -> str:
@@ -119,10 +80,7 @@ def main() -> int:
     args = parser.parse_args()
 
     try:
-        if args.pdf is None:
-            pdf_path = find_default_pdf(args.source_dir)
-        else:
-            pdf_path = resolve_pdf_path(args.pdf, args.source_dir)
+        pdf_path = resolve_pdf_input(args.pdf, args.source_dir)
     except (FileNotFoundError, RuntimeError) as error:
         print(str(error), file=sys.stderr)
         return 1
@@ -136,21 +94,42 @@ def main() -> int:
     )
 
     pdf_stem = pdf_path.stem
-    raw_pages_path = args.extracted_dir / f"{pdf_stem}_pages_raw.json"
-    normalized_pages_path = args.normalized_dir / f"{pdf_stem}_pages_normalized.json"
-    chunks_path = args.normalized_dir / f"{pdf_stem}_chunks.json"
+    raw_pages_path, normalized_pages_path = save_page_artifacts(
+        raw_pages,
+        normalized_pages,
+        extracted_dir=args.extracted_dir,
+        normalized_dir=args.normalized_dir,
+        pdf_stem=pdf_stem,
+    )
+    chunks_path = save_chunks_artifact(
+        chunks,
+        normalized_dir=args.normalized_dir,
+        pdf_stem=pdf_stem,
+    )
 
-    save_json_artifact(raw_pages, raw_pages_path)
-    save_json_artifact(normalized_pages, normalized_pages_path)
-    save_json_artifact(chunks, chunks_path)
+    embedder = Embedder()
+    embeddings = embedder.encode_texts([chunk.text for chunk in chunks])
+    embedding_rows, embedding_dimension = validate_embeddings(embeddings, len(chunks))
+    embeddings_path, embeddings_meta_path = save_embedding_artifacts(
+        embeddings,
+        output_dir=args.embeddings_dir,
+        pdf_stem=pdf_stem,
+        source_file=pdf_path.name,
+        chunk_artifact_path=chunks_path,
+        model_name=embedder.model_name,
+    )
 
     print(f"Source PDF: {pdf_path}")
     print(f"Raw extracted pages: {len(raw_pages)}")
     print(f"Normalized pages: {len(normalized_pages)}")
     print(f"Chunks: {len(chunks)}")
+    print(f"Embeddings: {embedding_rows}")
+    print(f"Embedding dimension: {embedding_dimension}")
     print(f"Saved raw pages to: {raw_pages_path}")
     print(f"Saved normalized pages to: {normalized_pages_path}")
     print(f"Saved chunks to: {chunks_path}")
+    print(f"Saved embeddings to: {embeddings_path}")
+    print(f"Saved embedding metadata to: {embeddings_meta_path}")
 
     for page in normalized_pages[:3]:
         print(
