@@ -47,13 +47,22 @@ pdf-qa/
 ├── reranker.py
 ├── qa_engine.py
 ├── scope_checker.py
-├── data/
-│   ├── input/
-│   ├── processed/
-│   └── indexes/
-├── tests/
-│   ├── test_smoke.py
-│   └── sample_questions.json
+├── Project/
+│   ├── Data/
+│   │   ├── source/
+│   │   ├── extracted/
+│   │   └── normalized/
+│   ├── tests/
+│   │   └── test_smoke.py
+│   ├── main.py
+│   ├── pdf_reader.py
+│   ├── chunker.py
+│   ├── embedder.py
+│   ├── retriever.py
+│   ├── reranker.py
+│   ├── qa_engine.py
+│   ├── scope_checker.py
+│   └── app.py
 └── assets/
     └── screenshots/
 ```
@@ -72,8 +81,8 @@ pdf-qa/
 
 ## Initial Module Responsibilities
 
-- `pdf_reader.py`: load the PDF, extract text per page, skip empty pages
-- `chunker.py`: normalize text and create chunks with overlap and metadata
+- `pdf_reader.py`: extract raw page text, normalize it page by page, skip empty pages after cleaning
+- `chunker.py`: build page-bounded chunks with overlap and metadata
 - `embedder.py`: load the embedding model and encode chunks/questions
 - `retriever.py`: build and query the FAISS index
 - `reranker.py`: reorder retrieved chunks by query relevance
@@ -103,7 +112,7 @@ This is outside the scope of the PDF.
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-python main.py
+python Project/main.py --pdf <your-file.pdf>
 ```
 
 ## Suggested Starter `requirements.txt`

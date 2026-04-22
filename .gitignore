@@ -14,6 +14,12 @@ __pycache__/
 # Local data and indexes
 data/processed/
 data/indexes/
+Project/Data/source/*
+Project/Data/extracted/*.json
+Project/Data/normalized/*.json
+!Project/Data/source/.gitkeep
+!Project/Data/extracted/.gitkeep
+!Project/Data/normalized/.gitkeep
 
 # Model and app caches
 .cache/

@@ -46,13 +46,22 @@ pdf-qa/
 ├── reranker.py
 ├── qa_engine.py
 ├── scope_checker.py
-├── data/
-│   ├── input/
-│   ├── processed/
-│   └── indexes/
-├── tests/
-│   ├── test_smoke.py
-│   └── sample_questions.json
+├── Project/
+│   ├── Data/
+│   │   ├── source/
+│   │   ├── extracted/
+│   │   └── normalized/
+│   ├── tests/
+│   │   └── test_smoke.py
+│   ├── main.py
+│   ├── pdf_reader.py
+│   ├── chunker.py
+│   ├── embedder.py
+│   ├── retriever.py
+│   ├── reranker.py
+│   ├── qa_engine.py
+│   ├── scope_checker.py
+│   └── app.py
 └── assets/
     └── screenshots/
 ```
