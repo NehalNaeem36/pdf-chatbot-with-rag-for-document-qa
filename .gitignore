@@ -18,6 +18,7 @@ data/indexes/
 # Model and app caches
 .cache/
 models/
+.tools/
 
 # Environment files
 .env
