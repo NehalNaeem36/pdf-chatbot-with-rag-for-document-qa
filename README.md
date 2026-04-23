@@ -155,3 +155,7 @@ The first version is successful when:
 - the source page/chunk is returned
 - unsupported questions are rejected instead of hallucinated
 - everything runs locally on the machine
+
+## License
+
+This project is licensed under the GNU General Public License v3.0. See [LICENSE](LICENSE) for details.
