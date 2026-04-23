@@ -38,15 +38,6 @@ pdf-chatbot-with-rag-for-document-qa/
 ├── README.md
 ├── PROJECT_PLAN.md
 ├── requirements.txt
-├── main.py
-├── app.py
-├── pdf_reader.py
-├── chunker.py
-├── embedder.py
-├── retriever.py
-├── reranker.py
-├── qa_engine.py
-├── scope_checker.py
 ├── Project/
 │   ├── Data/
 │   │   ├── source/
